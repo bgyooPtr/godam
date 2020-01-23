@@ -3,120 +3,148 @@
 __author__ = "Byeonggil Yoo"
 __copyright__ = "Copyright 2020, The GoDam Project"
 __license__ = "GPL"
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 __maintainer__ = "Byeonggil Yoo"
 __email__ = "byeonggil.u@gmail.com"
 
 import sys
-import subprocess
-from socket import socket, SO_REUSEADDR, SOL_SOCKET, SOCK_STREAM, AF_INET, gethostbyname, gethostname
-from asyncio import Task, coroutine, get_event_loop
-
 import argparse
+
+import socketserver
+import socket
 import threading
-import getpass
+import subprocess
+
+ENCODING = 'utf-8'
+lock = threading.Lock()
 
 def send_msg_to_notification(msg):
     subprocess.Popen(['notify-send', msg])
     return
 
-ENCODING = 'utf-8'
-BUFFER_SIZE = 1024
+class UserManager:
+    def __init__(self):
+        self.users = {}
 
-class Peer(object):
-    def __init__(self, server, sock, name):
-        self.loop = server.loop
-        self.name = name
-        self._sock = sock
-        self._server = server
-        Task(self._peer_handler())
+    def add_user(self, username, conn, addr):
+        if username in self.users:
+            conn.send('Already registered user'.encode(ENCODING))
+            return None
+        
+        lock.acquire()
+        self.users[username] = (conn, addr)
+        lock.release()
 
-    def send(self, data):
-        return self.loop.sock_sendall(self._sock, data.encode(ENCODING))
+        self.broadcast('[%s] is connected!!' % username)
 
-    @coroutine
-    def _peer_handler(self):
-        try:
-            yield from self._peer_loop()
-        except IOError:
-            pass
-        finally:
-            self._server.remove(self)
+        return username
     
-    @coroutine
-    def _peer_loop(self):
+    def remove_user(self, username):
+        if username not in self.users:
+            return
+        
+        lock.acquire()
+        del self.users[username]
+        lock.release()
+
+        self.broadcast('[%s] is disconnected!!' % username)
+
+    def message_handler(self, username, msg):
+        if msg[0] != '/':
+            self.broadcast('[%s] %s' % (username, msg), username)
+            return
+        if msg.strip() == '/godam':
+            self.broadcast(msg)
+        if msg.strip() == '/quit':
+            self.remove_user(username)
+            return -1
+
+    def broadcast(self, msg, username=None):
+        # for conn, addr in self.users.values():
+            # conn.send(msg.encode(ENCODING))
+        for key in self.users.keys():
+            if username is None:
+                self.users[key][0].send(msg.encode(ENCODING))
+            else:
+                if key is not username:
+                    self.users[key][0].send(msg.encode(ENCODING))
+
+class TCPHandler(socketserver.BaseRequestHandler):
+    userman = UserManager()
+
+    def handle(self):
+        print('[%s] is connected.' % self.client_address[0])
+
+        try:
+            username = self.register_username()
+            print('[%s] is registered.' % username)
+            msg = self.request.recv(1024)
+
+            while msg:
+                print('%s> %s' % (username, msg.decode(ENCODING)))
+                if self.userman.message_handler(username, msg.decode()) == -1:
+                    self.request.close()
+                    break
+                msg = self.request.recv(1024)
+        except Exception as e:
+            print(e)
+        
+        print('[%s] exit' %self.client_address[0])
+        self.userman.remove_user(username)
+
+    def register_username(self):
         while True:
-            buf = yield from self.loop.sock_recv(self._sock, BUFFER_SIZE)
-            if buf == b'':
-                break
+            self.request.send('Your ID:'.encode(ENCODING))
+            username = self.request.recv(1024)
+            username = username.decode(ENCODING).strip()
+            if self.userman.add_user(username, self.request, self.client_address):
+                return username
 
-            message = '%s: %s' % (self.name, buf.decode(ENCODING))
-
-            print(message)
-            self._server.broadcast(message)
-
-class Server(object):
-    def __init__(self, loop, port):
-        self.loop = loop
-        self._serv_sock = socket()
-        self._serv_sock.setblocking(0)
-        self._serv_sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-        self._serv_sock.bind(('', port))
-        self._serv_sock.listen(5)
-        self._peers = []
-        Task(self._server())
-
-    def remove(self, peer):
-        self._peers.remove(peer)
-        self.broadcast('Peer %s quit!\n' % (peer.name))
-
-    def broadcast(self, message):
-        for peer in self._peers:
-            peer.send(message)
-
-    @coroutine
-    def _server(self):
-        while True:
-            peer_sock, peer_name = yield from self.loop.sock_accept(self._serv_sock)
-            peer_sock.setblocking(0)
-            peer = Peer(self, peer_sock, peer_name)
-            self._peers.append(peer)
-
-            message = 'Peer %s connected!\n' % (peer.name,)
-            print(message)
-            self.broadcast(message)
+class GodamServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    pass
 
 def run_server(port):
-    loop = get_event_loop()
-    Server(loop, port)
-    loop.run_forever()
-
-## client
-def listener(sock):
+    print('-- Godam Server --')
     try:
-        while True:
-            data = sock.recv(BUFFER_SIZE).decode(ENCODING)
-            print('>', data)
-            send_msg_to_notification(data)
-    except ConnectionAbortedError:
-        pass
+        server = GodamServer(('', port), TCPHandler)
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print('bye~')
+        server.shutdown()
+        server.server_close()
+
+# Client
+
+def recv_msg(sock):
+    while True:
+        try:
+            data = sock.recv(1024)
+            if not data:
+                break
+            msg = data.decode(ENCODING)
+            if msg == '/godam':
+                send_msg_to_notification("Go dam!!")
+            else:
+                print(msg)
+        except:
+            pass
 
 def run_client(host, port):
-    sock = socket(AF_INET, SOCK_STREAM)
-    sock.connect((host, port))
-
-    listener_thread = threading.Thread(target=listener, args=(sock,))
-    listener_thread.start()
-
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.connect((host, port))
+        t = threading.Thread(target=recv_msg, args=(sock,))
+        t.daemon = True
+        t.start()
+        
         while True:
-            message = input('>')
-            sock.send(message.encode(ENCODING))
-    except EOFError:
-        pass
-    finally:
-        sock.close()
+            msg = input()
+            if msg == '/quit':
+                sock.send(msg.encode(ENCODING))
+                break
 
+            sock.send(msg.encode(ENCODING))
+
+# Main
 if __name__ == "__main__":
     if len(sys.argv) < 1:
         print('-h or --help')
@@ -134,4 +162,3 @@ if __name__ == "__main__":
     if(args.client is not None):
         print('Client is connecting to the server', args.client[0], args.client[1])
         run_client(args.client[0], int(args.client[1]))
-
