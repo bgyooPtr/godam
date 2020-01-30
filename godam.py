@@ -97,8 +97,9 @@ class TCPHandler(socketserver.BaseRequestHandler):
             msg = self.request.recv(1024)
 
             while msg:
+                print('TCPHandler::handle()')
                 print('%s> %s' % (username, msg.decode(ENCODING)))
-                if self.userman.message_handler(username, msg.decode()) == -1:
+                if self.userman.message_handler(username, msg.decode(ENCODING)) == -1:
                     self.request.close()
                     break
                 msg = self.request.recv(1024)
@@ -112,6 +113,7 @@ class TCPHandler(socketserver.BaseRequestHandler):
 
     def register_username(self):
         while True:
+            print('TCPHandler::register_username()')
             username = self.request.recv(1024)
             username = username.decode(ENCODING).replace('/user_id/', '')
             if self.userman.add_user(username, self.request, self.client_address):
@@ -140,10 +142,10 @@ class GodamClient():
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((host, port))
 
-
     def recv_msg_loop(self):
         while True:
             try:
+                print('GodamClient::recv_msg_loop()')
                 data = self.sock.recv(1024)
                 if not data:
                     break
@@ -156,33 +158,30 @@ class GodamClient():
                 pass
 
     def set_user_id(self, id):
-        while True:
-            self.sock.send(('/user_id/' + id).encode(ENCODING))
-            data = self.sock.recv(1024)
-            msg = data.decode(ENCODING)
-            if msg.replace('/user_id/', '') == '_registered':
+        print('GodamClient::set_user_id before_loop')
+        self.sock.send(('/user_id/' + id).encode(ENCODING))
+        msg = self.sock.recv(1024)
+        while msg:
+            print('GodamClient::set_user_id in_loop')
+            if msg.decode(ENCODING).replace('/user_id/', '') == '_registered':
                 print('[%s] is registered.' % id)
                 break
+            msg = self.sock.recv(1024)
 
-    def send_msg_loop(self):
-        while True:
-            msg = input()
-            self.sock.send(msg.encode(ENCODING))
-
-            if msg == '/quit':
-                break
+    def send_msg(self, msg):
+        # msg = input()
+        msg = msg.strip()
+        self.sock.send(msg.encode(ENCODING))
+        if msg == '/quit':
+            self.sock.close()
 
     def run(self):
-        recv_thread = threading.Thread(target=self.recv_msg_loop)
-        recv_thread.daemon = True
-        recv_thread.start()
+        self.recv_msg_loop()
+        # recv_thread = threading.Thread(target=self.recv_msg_loop)
+        # recv_thread.daemon = True
+        # recv_thread.start()
 
-        send_thread = threading.Thread(target=self.send_msg_loop)
-        send_thread.daemon = True
-        send_thread.start()
-
-        recv_thread.join()
-        send_thread.join()
+        # recv_thread.join()
 
 # UI
 class ClientUI(QWidget):
@@ -195,13 +194,20 @@ class ClientUI(QWidget):
         main_layout = QGridLayout()
 
         self.txtUser = QLineEdit(self)
-        main_layout.addWidget(self.txtUser, 1, 0)
+        main_layout.addWidget(self.txtUser, 0, 0)
 
         self.btnRegister = QPushButton('Register', self)
         self.btnRegister.setCheckable(True)
         self.btnRegister.toggle()
         self.btnRegister.clicked.connect(self.btnRegister_clicked)
-        main_layout.addWidget(self.btnRegister, 1, 1)
+        main_layout.addWidget(self.btnRegister, 0, 1)
+
+        self.txtMsg = QLineEdit(self)
+        main_layout.addWidget(self.txtMsg, 1, 0)
+
+        self.btnSend = QPushButton('Send', self)
+        self.btnSend.clicked.connect(self.btnSend_clicked)
+        main_layout.addWidget(self.btnSend, 1, 1)
 
         btnQuit = QPushButton('Quit', self)
         btnQuit.clicked.connect(QCoreApplication.instance().quit)
@@ -217,15 +223,22 @@ class ClientUI(QWidget):
             self.userID = self.txtUser.text()
             self.client.set_user_id(self.userID)
 
-            client_thread = threading.Thread(target=self.client.run())
-            client_thread.daemon = True
-            client_thread.start()
+            print('set_user_id done')
+            self.client_thread = threading.Thread(target=self.client.run())
+            # self.client_thread.daemon = True
+            self.client_thread.start()
+            print('client thread start')
 
             self.txtUser.setDisabled(True)
             self.btnRegister.setText('Cancel')
         else:
             self.txtUser.setDisabled(False)
             self.btnRegister.setText('Register')
+    
+    def btnSend_clicked(self):
+        msg = self.txtMsg.text()
+        self.client.send_msg(msg.decode(ENCODING))
+        self.txtMsg.clear()
 
 def run_client(host, port):
     client = GodamClient(host, port)
