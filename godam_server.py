@@ -7,20 +7,10 @@ __version__ = "0.1.0"
 __maintainer__ = "Byeonggil Yoo"
 __email__ = "byeonggil.u@gmail.com"
 
-import sys
-import argparse
-
 import socketserver
 import socket
-import threading
-import subprocess
 
 ENCODING = 'utf-8'
-lock = threading.Lock()
-
-def send_msg_to_notification(msg):
-    subprocess.Popen(['notify-send', msg])
-    return
 
 class UserManager:
     def __init__(self):
@@ -31,10 +21,7 @@ class UserManager:
             conn.send('Already registered user'.encode(ENCODING))
             return None
         
-        lock.acquire()
         self.users[username] = (conn, addr)
-        lock.release()
-
         self.broadcast('[%s] is connected!!' % username)
 
         return username
@@ -43,10 +30,7 @@ class UserManager:
         if username not in self.users:
             return
         
-        lock.acquire()
         del self.users[username]
-        lock.release()
-
         self.broadcast('[%s] is disconnected!!' % username)
 
     def message_handler(self, username, msg):
@@ -111,56 +95,10 @@ def run_server(port):
         server = GodamServer(('', port), TCPHandler)
         server.serve_forever()
     except KeyboardInterrupt:
-        print('bye~')
         server.shutdown()
         server.server_close()
 
-# Client
-
-def recv_msg(sock):
-    while True:
-        try:
-            data = sock.recv(1024)
-            if not data:
-                break
-            msg = data.decode(ENCODING)
-            if msg == '/godam':
-                send_msg_to_notification("Go dam!!")
-            else:
-                print(msg)
-        except:
-            pass
-
-def run_client(host, port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.connect((host, port))
-        t = threading.Thread(target=recv_msg, args=(sock,))
-        t.daemon = True
-        t.start()
-        
-        while True:
-            msg = input()
-            if msg == '/quit':
-                sock.send(msg.encode(ENCODING))
-                break
-
-            sock.send(msg.encode(ENCODING))
-
 # Main
 if __name__ == "__main__":
-    if len(sys.argv) < 1:
-        print('-h or --help')
-        sys.exit(1)
-
-    parser = argparse.ArgumentParser(description='for my friends')
-    parser.add_argument('-s', '--server', type=str, nargs=1, help='-s <port>')
-    parser.add_argument('-c', '--client', type=str, nargs=2, help='-c <ip-addr> <port>')
-    args = parser.parse_args()
-
-    if(args.server is not None):
-        print('Server will be started:', args.server[0])
-        run_server(int(args.server[0]))
-
-    if(args.client is not None):
-        print('Client is connecting to the server', args.client[0], args.client[1])
-        run_client(args.client[0], int(args.client[1]))
+    PORT = 1126
+    run_server(PORT)
