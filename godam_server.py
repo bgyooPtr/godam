@@ -33,15 +33,28 @@ class UserManager:
         del self.users[username]
         self.broadcast('[%s] is disconnected!!' % username)
 
+    def list_user(self):
+        msg = ''
+        cnt = 0
+        for key, _ in self.users.items():
+            msg += "{}: {}\n".format(cnt, key)
+            cnt += 1
+        return msg
+
     def message_handler(self, username, msg):
         if msg[0] != '/':
             self.broadcast('[%s] %s' % (username, msg), username)
             return
         if msg.strip() == '/godam':
             self.broadcast(msg)
-        if msg.strip() == '/quit':
+        elif msg.strip() == '/list':
+            self.send_to_user(self.list_user(), username)
+        elif msg.strip() == '/quit':
             self.remove_user(username)
             return -1
+            
+    def send_to_user(self, msg, username):
+        self.users[username][0].send(msg.encode(ENCODING))
 
     def broadcast(self, msg, username=None):
         # for conn, addr in self.users.values():
@@ -65,23 +78,27 @@ class TCPHandler(socketserver.BaseRequestHandler):
             msg = self.request.recv(1024)
 
             while msg:
+                print('TCPHandler::handle()')
                 print('%s> %s' % (username, msg.decode(ENCODING)))
-                if self.userman.message_handler(username, msg.decode()) == -1:
+                if self.userman.message_handler(username, msg.decode(ENCODING)) == -1:
                     self.request.close()
                     break
                 msg = self.request.recv(1024)
+
+            print('[%s] exit' %self.client_address[0])
+            self.userman.remove_user(username)
+
         except Exception as e:
             print(e)
         
-        print('[%s] exit' %self.client_address[0])
-        self.userman.remove_user(username)
 
     def register_username(self):
         while True:
-            self.request.send('Your ID:'.encode(ENCODING))
+            print('TCPHandler::register_username()')
             username = self.request.recv(1024)
-            username = username.decode(ENCODING).strip()
+            username = username.decode(ENCODING).replace('/user_id/', '')
             if self.userman.add_user(username, self.request, self.client_address):
+                self.userman.send_to_user('/user_id/_registered', username)
                 return username
 
 class GodamServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
